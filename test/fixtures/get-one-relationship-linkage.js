@@ -1,13 +1,13 @@
 export default {
   data: {
     type: 'user',
-    id: '1',
+    id: 1,
     attributes: {
       name: 'Bob',
     },
     relationships: {
       address: {
-        data: { type: 'address', id: '2' }
+        data: { type: 'address', id: '9' }
       }
     }
   }
