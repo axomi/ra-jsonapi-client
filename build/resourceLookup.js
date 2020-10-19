@@ -4,8 +4,6 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 
-var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
-
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -126,29 +124,23 @@ var ResourceLookup = function () {
       }, response.attributes);
 
       // Deal with relationships
-      if (response.hasOwnProperty('relationships')) {
+      if (response.hasOwnProperty("relationships")) {
         ret.relationships = {};
         var _iteratorNormalCompletion2 = true;
         var _didIteratorError2 = false;
         var _iteratorError2 = undefined;
 
         try {
-          for (var _iterator2 = Object.entries(response.relationships)[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
-            var _ref = _step2.value;
+          for (var _iterator2 = Object.keys(response.relationships)[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+            var relationName = _step2.value;
 
-            var _ref2 = _slicedToArray(_ref, 2);
-
-            var relationName = _ref2[0];
-            var relation = _ref2[1];
-
-            if (relation.hasOwnProperty('data')) {
-              if (Array.isArray(relation)) {
-                ret.relationships[relationName] = relation.data.map(function (resource) {
-                  return _this.unwrapData(_this.get(resource));
-                });
-              } else {
-                ret.relationships[relationName] = this.unwrapData(this.get(relation.data));
-              }
+            var relation = response.relationships[relationName].data;
+            if (Array.isArray(relation)) {
+              ret.relationships[relationName] = relation.map(function (resource) {
+                return _this.unwrapData(_this.get(resource));
+              });
+            } else {
+              ret.relationships[relationName] = this.unwrapData(this.get(relation));
             }
           }
         } catch (err) {

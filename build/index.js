@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 Object.defineProperty(exports, "__esModule", {
   value: true
@@ -6,27 +6,29 @@ Object.defineProperty(exports, "__esModule", {
 
 var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
-var _qs = require('qs');
+var _qs = require("qs");
 
-var _deepmerge = require('deepmerge');
+var _deepmerge = require("deepmerge");
 
 var _deepmerge2 = _interopRequireDefault(_deepmerge);
 
-var _axios = require('axios');
+var _axios = require("axios");
 
 var _axios2 = _interopRequireDefault(_axios);
 
-var _jsonapiSerializer = require('jsonapi-serializer');
+var _actions = require("./actions");
 
-var _actions = require('./actions');
-
-var _defaultSettings = require('./default-settings');
+var _defaultSettings = require("./default-settings");
 
 var _defaultSettings2 = _interopRequireDefault(_defaultSettings);
 
-var _errors = require('./errors');
+var _errors = require("./errors");
 
-var _initializer = require('./initializer');
+var _resourceLookup = require("./resourceLookup");
+
+var _resourceLookup2 = _interopRequireDefault(_resourceLookup);
+
+var _initializer = require("./initializer");
 
 var _initializer2 = _interopRequireDefault(_initializer);
 
@@ -86,7 +88,7 @@ var relationshipProxyHandler = {
 exports.default = function (apiUrl) {
   var userSettings = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
   return function (type, resource, params) {
-    var url = '';
+    var url = "";
     var settings = (0, _deepmerge2.default)(_defaultSettings2.default, userSettings);
 
     var options = {
@@ -116,58 +118,64 @@ exports.default = function (apiUrl) {
           // Create query with pagination params.
 
           var query = {
-            'page[number]': page,
-            'page[size]': perPage
-          };
+            "page[number]": page,
+            "page[size]": perPage
 
-          // Add all filter params to query.
-          Object.keys(params.filter || {}).forEach(function (key) {
-            query['filter[' + key + ']'] = params.filter[key];
+            // Add all filter params to query.
+          };Object.keys(params.filter || {}).forEach(function (key) {
+            query["filter[" + key + "]"] = params.filter[key];
           });
 
           // Add sort parameter
           if (params.sort && params.sort.field) {
-            var prefix = params.sort.order === 'ASC' ? '' : '-';
-            query.sort = '' + prefix + params.sort.field;
+            var prefix = params.sort.order === "ASC" ? "" : "-";
+            query.sort = "" + prefix + params.sort.field;
           }
 
-          url = apiUrl + '/' + resource + '?' + (0, _qs.stringify)(query);
+          url = apiUrl + "/" + resource + "?" + (0, _qs.stringify)(query);
           break;
         }
 
       case _actions.GET_ONE:
-        url = apiUrl + '/' + resource + '/' + params.id;
+        url = apiUrl + "/" + resource + "/" + params.id;
         break;
 
       case _actions.CREATE:
-        url = apiUrl + '/' + resource;
-        options.method = 'POST';
-        options.data = new _jsonapiSerializer.Serializer(resource, getSerializerOpts()).serialize(params.data);
+        url = apiUrl + "/" + resource;
+        options.method = "POST";
+        options.data = JSON.stringify({
+          data: { type: resource, attributes: params.data }
+        });
         break;
 
       case _actions.UPDATE:
         {
-          url = apiUrl + '/' + resource + '/' + params.id;
+          url = apiUrl + "/" + resource + "/" + params.id;
 
-          var data = Object.assign({ id: params.id }, params.data);
+          var data = {
+            data: {
+              id: params.id,
+              type: resource,
+              attributes: params.data
+            }
+          };
 
           options.method = settings.updateMethod;
-          options.data = new _jsonapiSerializer.Serializer(resource, getSerializerOpts()).serialize(data);
+          options.data = JSON.stringify(data);
           break;
         }
 
       case _actions.DELETE:
-        url = apiUrl + '/' + resource + '/' + params.id;
-        options.method = 'DELETE';
+        url = apiUrl + "/" + resource + "/" + params.id;
+        options.method = "DELETE";
         break;
 
       case _actions.GET_MANY:
         {
-          var _query = (0, _qs.stringify)({
-            'filter[id]': params.ids
-          }, { arrayFormat: settings.arrayFormat });
-
-          url = apiUrl + '/' + resource + '?' + _query;
+          var _query = {
+            filter: JSON.stringify({ id: params.ids })
+          };
+          url = apiUrl + "/" + resource + "?" + (0, _qs.stringify)(_query);
           break;
         }
 
@@ -180,63 +188,55 @@ exports.default = function (apiUrl) {
           // Create query with pagination params.
 
           var _query2 = {
-            'page[number]': _page,
-            'page[size]': _perPage
-          };
+            "page[number]": _page,
+            "page[size]": _perPage
 
-          // Add all filter params to query.
-          Object.keys(params.filter || {}).forEach(function (key) {
-            _query2['filter[' + key + ']'] = params.filter[key];
+            // Add all filter params to query.
+          };Object.keys(params.filter || {}).forEach(function (key) {
+            _query2["filter[" + key + "]"] = params.filter[key];
           });
 
           // Add the reference id to the filter params.
-          _query2['filter[' + params.target + ']'] = params.id;
+          _query2["filter[" + params.target + "]"] = params.id;
 
-          url = apiUrl + '/' + resource + '?' + (0, _qs.stringify)(_query2);
+          url = apiUrl + "/" + resource + "?" + (0, _qs.stringify)(_query2);
           break;
         }
 
       default:
-        throw new _errors.NotImplementedError('Unsupported Data Provider request type ' + type);
+        throw new _errors.NotImplementedError("Unsupported Data Provider request type " + type);
     }
 
     return (0, _axios2.default)(_extends({ url: url }, options)).then(function (response) {
-      var opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
+      var lookup = new _resourceLookup2.default(response.data);
 
       switch (type) {
         case _actions.GET_MANY:
         case _actions.GET_MANY_REFERENCE:
         case _actions.GET_LIST:
-          {
-            // Use the length of the data array as a fallback.
-            var total = response.data.data.length;
-            if (response.data.meta && settings.total) {
-              total = response.data.meta[settings.total];
-            }
+          return {
+            data: response.data.data.map(function (resource) {
+              return lookup.unwrapData(resource);
+            }),
+            total: response.data.meta[settings.total]
+          };
 
-            return new _jsonapiSerializer.Deserializer(opts).deserialize(response.data).then(function (data) {
-              return { data: data, total: total };
-            });
-          }
         case _actions.GET_ONE:
         case _actions.CREATE:
         case _actions.UPDATE:
-          {
-            return new _jsonapiSerializer.Deserializer(opts).deserialize(response.data).then(function (data) {
-              return { data: data };
-            });
-          }
+          return {
+            data: lookup.unwrapData(response.data.data)
+          };
+
         case _actions.DELETE:
           {
-            return Promise.resolve({
-              data: {
-                id: params.id
-              }
-            });
+            return {
+              data: { id: params.id }
+            };
           }
 
         default:
-          throw new _errors.NotImplementedError('Unsupported Data Provider request type ' + type);
+          throw new _errors.NotImplementedError("Unsupported Data Provider request type " + type);
       }
     });
   };
