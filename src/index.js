@@ -1,20 +1,42 @@
 import { stringify } from 'qs';
-import merge from 'deepmerge';
-import axios from 'axios';
-import {
-  GET_LIST,
-  GET_ONE,
-  CREATE,
-  UPDATE,
-  DELETE,
-  GET_MANY,
-  GET_MANY_REFERENCE,
-} from './actions';
+import merge from "deepmerge"
+import { Deserializer, Serializer } from 'jsonapi-serializer';
 
-import defaultSettings from './default-settings';
-import { NotImplementedError } from './errors';
-import ResourceLookup from './resourceLookup';
-import init from './initializer';
+// Utility to externally merge defaults (for now)
+export const defaultSettings = {
+  total: 'total',
+  headers: new Headers({
+    Accept: 'application/vnd.api+json; charset=utf-8',
+    'Content-Type': 'application/vnd.api+json; charset=utf-8',
+  }),
+  updateMethod: 'PATCH',
+  arrayFormat: 'brackets',
+  serializerOpts: {},
+  deserializerOpts: {},
+};
+
+export const getSettings = (userSettings) => merge(defaultSettings, userSettings);
+
+const processTotal = (settings, json) => {
+  // Do some validation of the total parameter if a list was requested
+  let total;
+
+  if (settings.total === null) {
+    // If the user explicitly provided no total field, then just count the number of objects returned
+    total = json.data.length;
+  } else if ('meta' in json && settings.total in json.meta) {
+    // If the user specified a count field, and it's present, then just use that
+    total = json.meta[settings.total];
+  } else if (!('meta' in json) || !(settings.total in json.meta)) {
+    // The third option: the server doesn't return a total property at all, so we have to throw an exception
+    throw new Error(`The JSON API response did not contain the field "${settings.total}" in the meta object.
+    Consider either setting the "total" setting to null for default behaviour, changing the "total" setting to
+    point to the correct meta field, or ensuring your JSON API server is actually returned a "total" meta
+    property.`);
+  }
+
+  return total;
+}
 
 /** This proxy ensures that every relationship is serialized to an object of the form {id: x}, even
  * if that relationship doesn't have included data
@@ -50,8 +72,18 @@ const relationshipProxyHandler = {
   },
 };
 
-// Set HTTP interceptors.
-init();
+const getSerializerOpts = (settings, resource, params) => {
+  const resourceSpecific = settings.serializerOpts[resource] || {};
+
+  // By default, assume the user wants to serialize all keys except links, in case that's
+  // a leftover from a deserialized resource
+  const attributes = new Set(Object.keys(params.data));
+  attributes.delete('links');
+
+  return Object.assign({
+    attributes: [...attributes],
+  }, resourceSpecific);
+};
 
 /**
  * Maps react-admin queries to a JSONAPI REST API
@@ -64,164 +96,161 @@ init();
  * @param {Object} payload Request parameters. Depends on the request type
  * @returns {Promise} the Promise for a data response
  */
-export default (apiUrl, userSettings = {}) => (type, resource, params) => {
-  let url = '';
-  const settings = merge(defaultSettings, userSettings);
+export default (apiUrl, settings = {}, httpClient) => ({
+  getList: (resource, params) => {
+    const { page, perPage } = params.pagination;
 
-  const options = {
-    headers: settings.headers,
-  };
+    // Create query with pagination params.
+    const query = {
+      'page[number]': page,
+      'page[size]': perPage,
+    };
 
-  function getSerializerOpts() {
-    const resourceSpecific = settings.serializerOpts[resource] || {};
+    // Add all filter params to query.
+    Object.keys(params.filter || {}).forEach((key) => {
+      query[`filter[${key}]`] = params.filter[key];
+    });
 
-    // By default, assume the user wants to serialize all keys except links, in case that's
-    // a leftover from a deserialized resource
-    const attributes = new Set(Object.keys(params.data));
-    attributes.delete('links');
+    // Add sort parameter
+    if (params.sort && params.sort.field) {
+      const prefix = params.sort.order === 'ASC' ? '' : '-';
+      query.sort = `${prefix}${params.sort.field}`;
+    }
+    const url = `${apiUrl}/${resource}?${stringify(query)}`;
 
-    return Object.assign({
-      attributes: [...attributes],
-    }, resourceSpecific);
-  }
+    return httpClient(url).then(({json}) => {
+      const opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
 
-  switch (type) {
-    case GET_LIST: {
-      const { page, perPage } = params.pagination;
-
-      // Create query with pagination params.
-      const query = {
-        'page[number]': page,
-        'page[size]': perPage,
-      };
-
-      // Add all filter params to query.
-      Object.keys(params.filter || {}).forEach((key) => {
-        query[`filter[${key}]`] = params.filter[key];
-      });
-
-      // Add sort parameter
-      if (params.sort && params.sort.field) {
-        const prefix = params.sort.order === 'ASC' ? '' : '-';
-        query.sort = `${prefix}${params.sort.field}`;
+      // Use the length of the data array as a fallback.
+      let total = json.data.length;
+      if (json.meta && settings.total) {
+        total = json.meta[settings.total];
       }
 
-      url = `${apiUrl}/${resource}?${stringify(query)}`;
-      break;
-    }
+      return new Deserializer(opts).deserialize(json).then(
+        data => ({ data, total }),
+      );
+    })
+  },
+  getOne: (resource, params) => {
+    const url = `${apiUrl}/${resource}/${params.id}`;
+    return httpClient(url).then(({json}) => {
+      const opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
 
-    case GET_ONE:
-      url = `${apiUrl}/${resource}/${params.id}`;
-      break;
+      return new Deserializer(opts).deserialize(json).then(
+        data => ({ data }),
+      );
+    })
+  },
+  getMany: (resource, params) => {
+    const query = stringify({
+      'filter[id]': params.ids,
+    }, { arrayFormat: settings.arrayFormat });
+    const url = `${apiUrl}/${resource}?${stringify(query)}`;
 
-    case CREATE:
-      url = `${apiUrl}/${resource}`;
-      options.method = 'POST';
-      options.data = JSON.stringify({
-        data: { type: resource, attributes: params.data },
-      });
-      break;
+    return httpClient(url).then(({json}) => {
+      const opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
 
-    case UPDATE: {
-      url = `${apiUrl}/${resource}/${params.id}`;
+      // Use the length of the data array as a fallback.
+      let total = json.data.length;
+      if (json.meta && settings.total) {
+        total = json.meta[settings.total];
+      }
 
-      const data = {
+      return new Deserializer(opts).deserialize(json).then(
+        data => ({ data, total }),
+      );
+    })
+  },
+  getManyReference: (resource, params) => {
+    const { page, perPage } = params.pagination;
+
+    // Create query with pagination params.
+    const query = {
+      'page[number]': page,
+      'page[size]': perPage,
+    };
+
+    // Add all filter params to query.
+    Object.keys(params.filter || {}).forEach((key) => {
+      query[`filter[${key}]`] = params.filter[key];
+    });
+
+    // Add the reference id to the filter params.
+    query[`filter[${params.target}]`] = params.id;
+
+    const url = `${apiUrl}/${resource}?${stringify(query)}`;
+
+    return httpClient(url).then(({json}) => {
+      const opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
+
+      // Use the length of the data array as a fallback.
+      let total = json.data.length;
+      if (json.meta && settings.total) {
+        total = json.meta[settings.total];
+      }
+
+      return new Deserializer(opts).deserialize(json).then(
+        data => ({ data, total }),
+      );
+    })
+  },
+  update: (resource, params) => {
+    const url = `${apiUrl}/${resource}/${params.id}`
+    const data = Object.assign({ id: params.id }, params.data);
+    const options = {
+      method: settings.updateMethod,
+    };
+    options.body = JSON.stringify(new Serializer(resource, getSerializerOpts(settings, resource, params)).serialize(data));
+
+    return httpClient(url, options).then(({json}) => {
+      const opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
+
+      return new Deserializer(opts).deserialize(json).then(
+        data => ({ data }),
+      );
+    })
+  },
+  updateMany: (resource, params) => {
+    Promise.all(
+      params.ids.map(id => {
+        return this.update(resource, params)
+      })
+    ).then(responses => ({ data: responses.map(({ json }) => json.id) }))
+  },
+  create: (resource, params) => {
+    const url = `${apiUrl}/${resource}`;
+    const options = { method: 'POST' }
+    options.body = JSON.stringify(new Serializer(resource, getSerializerOpts(settings, resource, params)).serialize(params.data));
+
+    return httpClient(url, options).then(({json}) => {
+      const opts = new Proxy(settings.deserializerOpts[resource] || {}, relationshipProxyHandler);
+
+      return new Deserializer(opts).deserialize(json).then(
+        data => ({ data }),
+      );
+    })
+  },
+  delete: (resource, params) => {
+    const url = `${apiUrl}/${resource}/${params.id}`;
+    const options = {
+      method: 'DELETE'
+    };
+
+    return httpClient(url, options).then(({json}) => {
+      return Promise.resolve({
         data: {
           id: params.id,
-          type: resource,
-          attributes: params.data,
         },
-      };
-
-      options.method = settings.updateMethod;
-      options.data = JSON.stringify(data);
-      break;
-    }
-
-    case DELETE:
-      url = `${apiUrl}/${resource}/${params.id}`;
-      options.method = 'DELETE';
-      break;
-
-    case GET_MANY: {
-      const query = {
-        filter: JSON.stringify({ id: params.ids }),
-      };
-      url = `${apiUrl}/${resource}?${stringify(query)}`;
-      break;
-    }
-
-    case GET_MANY_REFERENCE: {
-      const { page, perPage } = params.pagination;
-
-      // Create query with pagination params.
-      const query = {
-        'page[number]': page,
-        'page[size]': perPage,
-      };
-
-      // Add all filter params to query.
-      Object.keys(params.filter || {}).forEach((key) => {
-        query[`filter[${key}]`] = params.filter[key];
       });
-
-      // Add the reference id to the filter params.
-      query[`filter[${params.target}]`] = params.id;
-
-      url = `${apiUrl}/${resource}?${stringify(query)}`;
-      break;
-    }
-
-    default:
-      throw new NotImplementedError(`Unsupported Data Provider request type ${type}`);
+    })
+  },
+  deleteMany: (resource, params) => {
+    return Promise.all(
+      params.ids.map(id => {
+        this.delete(resource, { id })
+      })
+  ).then(responses =>
+    ({ data: responses.map(({ json }) => json.id) }))
   }
-
-  return axios({ url, ...options })
-    .then((response) => {
-      const lookup = new ResourceLookup(response.data);
-
-      // Do some validation of the total parameter if a list was requested
-      let total;
-      if ([ GET_LIST, GET_MANY, GET_MANY_REFERENCE ].includes(type)) {
-        if (settings.total === null) {
-          // If the user explicitly provided no total field, then just count the number of objects returned
-          total = response.data.data.length;
-        } else if ('meta' in response.data && settings.total in response.data.meta) {
-          // If the user specified a count field, and it's present, then just use that
-          total = response.data.meta[settings.total];
-        } else if (!('meta' in response.data) || !(settings.total in response.data.meta)) {
-          // The third option: the server doesn't return a total property at all, so we have to throw an exception
-          throw new Error(`The JSON API response did not contain the field "${settings.total}" in the meta object.
-          Consider either setting the "total" setting to null for default behaviour, changing the "total" setting to
-          point to the correct meta field, or ensuring your JSON API server is actually returned a "total" meta
-          property.`);
-        }
-      }
-
-      switch (type) {
-        case GET_MANY:
-        case GET_MANY_REFERENCE:
-        case GET_LIST:
-          return {
-            data: response.data.data.map(resource => lookup.unwrapData(resource)),
-            total,
-          };
-
-        case GET_ONE:
-        case CREATE:
-        case UPDATE:
-          return {
-            data: lookup.unwrapData(response.data.data),
-          };
-
-        case DELETE: {
-          return {
-            data: { id: params.id },
-          };
-        }
-
-        default:
-          throw new NotImplementedError(`Unsupported Data Provider request type ${type}`);
-      }
-    });
-};
+})
