@@ -20,10 +20,6 @@ function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr
 // Utility to externally merge defaults (for now)
 var defaultSettings = exports.defaultSettings = {
   total: 'total',
-  headers: new Headers({
-    Accept: 'application/vnd.api+json; charset=utf-8',
-    'Content-Type': 'application/vnd.api+json; charset=utf-8'
-  }),
   updateMethod: 'PATCH',
   arrayFormat: 'brackets',
   serializerOpts: {},
@@ -31,7 +27,13 @@ var defaultSettings = exports.defaultSettings = {
 };
 
 var getSettings = exports.getSettings = function getSettings(userSettings) {
-  return (0, _deepmerge2.default)(defaultSettings, userSettings);
+  var settings = (0, _deepmerge2.default)(defaultSettings, userSettings);
+  settings.headers = new Headers({
+    Accept: 'application/vnd.api+json; charset=utf-8',
+    'Content-Type': 'application/vnd.api+json; charset=utf-8'
+  });
+
+  return settings;
 };
 
 var processTotal = function processTotal(settings, json) {

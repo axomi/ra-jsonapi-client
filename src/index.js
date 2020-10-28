@@ -5,17 +5,21 @@ import { Deserializer, Serializer } from 'jsonapi-serializer';
 // Utility to externally merge defaults (for now)
 export const defaultSettings = {
   total: 'total',
-  headers: new Headers({
-    Accept: 'application/vnd.api+json; charset=utf-8',
-    'Content-Type': 'application/vnd.api+json; charset=utf-8',
-  }),
   updateMethod: 'PATCH',
   arrayFormat: 'brackets',
   serializerOpts: {},
   deserializerOpts: {},
 };
 
-export const getSettings = (userSettings) => merge(defaultSettings, userSettings);
+export const getSettings = (userSettings) => {
+  const settings = merge(defaultSettings, userSettings);
+  settings.headers = new Headers({
+    Accept: 'application/vnd.api+json; charset=utf-8',
+    'Content-Type': 'application/vnd.api+json; charset=utf-8',
+  });
+
+  return settings
+}
 
 const processTotal = (settings, json) => {
   // Do some validation of the total parameter if a list was requested
